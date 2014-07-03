@@ -144,24 +144,29 @@ else
 fi
 
 # Tag release
-git_tag_opts=( -m "Release $version" )
-case $git_tag_sign in
-a)
-	git_tag_opts+=( --annotate )
-	;;
-s)
-	git_tag_opts+=( --sign )
-	;;
-u)
-	git_tag_opts+=( --local-user=$git_tag_local_user )
-	;;
-esac
-git tag v$version "${git_tag_opts[@]}"
+if ! rev-parse --verify --quiet refs/tags/v$version; then
+	git_tag_opts=( -m "Release $version" )
+	case $git_tag_sign in
+	a)
+		git_tag_opts+=( --annotate )
+		;;
+	s)
+		git_tag_opts+=( --sign )
+		;;
+	u)
+		git_tag_opts+=( --local-user=$git_tag_local_user )
+		;;
+	esac
+	git tag v$version "${git_tag_opts[@]}"
 
-function revert_tag {
-	git tag -d v$version
-}
-cleanup_func_add revert_tag
+	function revert_tag {
+		git tag -d v$version
+	}
+	cleanup_func_add revert_tag
+else
+	git read-tree --empty
+	git read-tree refs/tags/v$version
+fi
 
 cd "$GIT_WORK_TREE"
 
