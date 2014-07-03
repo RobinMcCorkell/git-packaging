@@ -1,0 +1,59 @@
+#!/bin/bash
+
+#Copyright (C) 2014 Robin McCorkell <rmccorkell@karoshi.org.uk>
+
+#This file is part of git-packaging.
+#
+#git-packaging is free software: you can redistribute it and/or modify
+#it under the terms of the GNU General Public License as published by
+#the Free Software Foundation, either version 3 of the License, or
+#(at your option) any later version.
+#
+#git-packaging is distributed in the hope that it will be useful,
+#but WITHOUT ANY WARRANTY; without even the implied warranty of
+#MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#GNU General Public License for more details.
+#
+#You should have received a copy of the GNU General Public License
+#along with git-packaging.  If not, see <http://www.gnu.org/licenses/>.
+
+# autoconf_ac_init <configure.{ac,in}>
+# sets:
+#  autoconf_package: package name
+#  autoconf_version: package version
+#  autoconf_tarname: package tarname
+function autoconf_ac_init {
+	if [[ -z $1 ]]; then return 1; fi
+	read -r autoconf_package autoconf_version autoconf_tarname \
+		< <(m4 -DAC_INIT='$1 $2 $4' <(echo "changequote([, ])dnl") \
+			<(sed -n '/AC_INIT/p' "$1") )
+	if [[ -z $autoconf_tarname ]]; then
+		autoconf_tarname=${autoconf_package#GNU }
+		autoconf_tarname=${autoconf_tarname,,}
+		autoconf_tarname=${autoconf_tarname//[^_abcdefghijklmnopqrstuvwxyz0123456789]/-}
+	fi
+}
+
+# autoconf_set_version <version> <configure.{ac,in}> [<README>]
+function autoconf_set_version {
+	if [[ -z $1 ]] || [[ -z $2 ]]; then return 1; fi
+	sed -i "s/\(AC_INIT(\[[^\[]*\)\[[^]]*\]/\1[$1]/" "$2"
+	if [[ $3 ]]; then
+		sed -i "s/^\(version \).*/\1$1/I" "$3"
+	fi
+}
+
+# autoconf_find_configure [<dir>]
+#  -> path-to-configure
+function autoconf_find_configure {
+	local dir=${1:-.}
+	local configure_names=( configure.ac configure.in )
+	local configure_file
+	for configure_file in "${configure_names[@]}"; do
+		if [[ -f $dir/$configure_file ]]; then
+			echo "$dir/$configure_file"
+			return
+		fi
+	done
+	return 1
+}

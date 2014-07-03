@@ -1,0 +1,176 @@
+#!/bin/bash
+
+#Copyright (C) 2014 Robin McCorkell <rmccorkell@karoshi.org.uk>
+
+#This file is part of git-packaging.
+#
+#git-packaging is free software: you can redistribute it and/or modify
+#it under the terms of the GNU General Public License as published by
+#the Free Software Foundation, either version 3 of the License, or
+#(at your option) any later version.
+#
+#git-packaging is distributed in the hope that it will be useful,
+#but WITHOUT ANY WARRANTY; without even the implied warranty of
+#MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#GNU General Public License for more details.
+#
+#You should have received a copy of the GNU General Public License
+#along with git-packaging.  If not, see <http://www.gnu.org/licenses/>.
+
+libexecdir=$(git-packaging-find-lib)
+
+source "$libexecdir"/gp-cleanup
+source "$libexecdir"/gp-autoconf
+source "$libexecdir"/gp-git
+
+function usage {
+	echo "Usage:" >&2
+	echo "  git release [options] [version]" >&2
+}
+
+git_tag_sign=a
+git_branch=master
+
+nonopt_count=0
+while (( $# > 0 )); do
+	case $1 in
+	--annotate)
+		git_tag_sign=a
+		;;
+	--sign)
+		git_tag_sign=s
+		;;
+	--local-user=*)
+		git_tag_sign=u
+		git_tag_local_user=${1#--local-user=}
+		;;
+	--branch=*)
+		git_branch=${1#--branch=}
+		;;
+	--*)
+		echo "unknown option $1" >&2
+		exit 254
+		;;
+	-*)
+		opts_string=${1#-}
+		while (( ${#opts_string} > 0 )); do
+			opt=${opts_string:0:1}
+			case $opt in
+			a)
+				git_tag_sign=a
+				;;
+			s)
+				git_tag_sign=s
+				;;
+			u)
+				git_tag_sign=u
+				shift
+				git_tag_local_user=$1
+				;;
+			b)
+				shift
+				git_branch=$1
+				;;
+			*)
+				echo "unknown option -$opt" >&2
+				exit 254
+				;;
+			esac
+		done
+		;;
+	*)
+		case $nonopt_count in
+		0)
+			version=$1
+			;;
+		*)
+			echo "too many arguments: $1" >&2
+			exit 254
+			;;
+		esac
+		;;
+	esac
+	shift
+done
+
+repodir=$(git rev-parse --show-toplevel)
+
+git_create_tmp_tree "$git_branch"
+cleanup_func_add git_clean_tmp_tree
+git checkout-index -a
+
+configure=$(autoconf_find_configure "$GIT_WORK_TREE")
+
+# Update package version
+autoconf_ac_init "$configure"
+if [[ $version ]]; then
+	autoconf_set_version "$version" "$configure" "$GIT_WORK_TREE"/README
+
+	# Create NEWS template
+	str="changes from $autoconf_version to $version"
+	strline=
+	for (( i = 0; i < ${#str}; ++i )); do strline+="-"; done
+	tmpfile=$(mktemp)
+
+	cat - > "$tmpfile" << EOF
+$str
+$strline
+EOF
+
+	git_log_range=HEAD
+	if git rev-parse --verify --quiet v$autoconf_version; then
+		git_log_range=v$autoconf_version..HEAD
+	fi
+
+	git log $git_log_range --no-merges --pretty=" * %s" >> "$tmpfile"
+	echo >> "$tmpfile"
+	cat "$GIT_WORK_TREE"/NEWS >> "$tmpfile"
+
+	mv "$tmpfile" "$GIT_WORK_TREE"/NEWS
+	EDITOR=${EDITOR:-vi}
+	$EDITOR "$GIT_WORK_TREE"/NEWS
+
+	git add "$GIT_WORK_TREE"
+	old_commit=$(git rev-parse "$git_branch")
+	msgs=( "Release $version" )
+	git_commit_to "$git_branch" msgs
+
+	function revert_commit {
+		git_update_ref refs/heads/"$git_branch" "$old_commit"
+	}
+	cleanup_func_add revert_commit
+else
+	version=$autoconf_version
+fi
+
+# Tag release
+git_tag_opts=( -m "Release $version" )
+case $git_tag_sign in
+a)
+	git_tag_opts+=( --annotate )
+	;;
+s)
+	git_tag_opts+=( --sign )
+	;;
+u)
+	git_tag_opts+=( --local-user=$git_tag_local_user )
+	;;
+esac
+git tag v$version "${git_tag_opts[@]}"
+
+function revert_tag {
+	git tag -d v$version
+}
+cleanup_func_add revert_tag
+
+cd "$GIT_WORK_TREE"
+
+# Create distribution
+./autogen.sh
+./configure
+make dist
+
+mv $autoconf_tarname-$version.* "$repodir"/..
+
+cleanup_func_remove revert_commit
+cleanup_func_remove revert_tag

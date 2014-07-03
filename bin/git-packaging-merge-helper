@@ -1,0 +1,83 @@
+#!/bin/bash
+
+#Copyright (C) 2014 Robin McCorkell <rmccorkell@karoshi.org.uk>
+
+#This file is part of git-packaging.
+#
+#git-packaging is free software: you can redistribute it and/or modify
+#it under the terms of the GNU General Public License as published by
+#the Free Software Foundation, either version 3 of the License, or
+#(at your option) any later version.
+#
+#git-packaging is distributed in the hope that it will be useful,
+#but WITHOUT ANY WARRANTY; without even the implied warranty of
+#MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#GNU General Public License for more details.
+#
+#You should have received a copy of the GNU General Public License
+#along with git-packaging.  If not, see <http://www.gnu.org/licenses/>.
+
+toplevel=$(git rev-parse --show-toplevel)
+cd "$toplevel"
+
+case "${1:-.}${2:-.}${3:-.}" in
+# Deleted in both or in one and unchanged in other
+"$1.." | "$1.$1" | "$1$1.")
+	exec git update-index --remove -- "$4"
+	;;
+# Added in one
+".$2.")
+	exec git update-index --add --cacheinfo "$6","$2","$4"
+	;;
+"..$3")
+	exec git update-index --add --cacheinfo "$7","$3","$4"
+	;;
+# Added identically in both
+".$3$2")
+	if [[ $6 != $7 ]]; then
+		echo "warning: $4: added identically, but permissions conflict $6->$7" >&2
+	fi
+	exec git update-index --add --cacheinfo "$6","$2","$4"
+	;;
+# Merge conflict
+"$1$2$3" | ".$2$3")
+	case ",$6,$7," in
+	*,120000,*)
+		echo "error: $4: cannot merge symbolic link changes" >&2
+		exit 1
+		;;
+	*,160000,*)
+		echo "error: $4: cannot merge conflicting submodule changes" >&2
+		exit 1
+		;;
+	esac
+
+	src1=$(git unpack-file "$2")
+	src2=$(git unpack-file "$3")
+	if [[ -z $1 ]]; then
+		# Added differently in both
+		orig=$(git unpack-file "$2")
+	else
+		# Changed differently in both
+		orig=$(git unpack-file "$1")
+	fi
+
+	git merge-file "$src1" "$orig" "$src2"
+	ret=$?
+
+	git checkout-index -f --stage=2 -- "$4"
+	cat "$src1" > "$4"
+	rm -f -- "$orig" "$src1" "$src2"
+
+	if (( ret == 0 )); then
+		exec git update-index -- "$4"
+	else
+		echo "Automatic merge failed: $4" >&2
+	fi
+	;;
+*)
+	echo "error: $4: unable to handle $1 -> $2 -> $3" >&2
+	;;
+esac
+
+exit 1

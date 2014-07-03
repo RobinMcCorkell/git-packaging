@@ -1,0 +1,31 @@
+git-packaging
+Version 0.1
+
+ Copyright (C) 2014 Robin McCorkell
+ This file is part of git-packaging.
+
+ git-packaging is free software: you can redistribute it and/or modify
+ it under the terms of the GNU Lesser General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+
+ git-packaging is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU Lesser General Public License for more details.
+
+ You should have received a copy of the GNU Lesser General Public License
+ along with git-packaging.  If not, see <http://www.gnu.org/licenses/>.
+
+A set of utilities to manage packaging using git. Autoconf packages are
+supported, which can then be imported to package into package manager packages
+such as Debian DPKG or Red Hat yum.
+
+Contact:
+ Robin McCorkell <rmccorkell@karoshi.org.uk>
+
+See INSTALL for instructions on how to install this program. For preparing a
+release, run ./autogen.sh to generate the required files.
+
+All source files are contained in the src directory. Additional macros used in
+configure.ac are stored in the m4 directory.

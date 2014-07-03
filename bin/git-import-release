@@ -1,0 +1,85 @@
+#!/bin/bash
+
+#Copyright (C) 2014 Robin McCorkell <rmccorkell@karoshi.org.uk>
+
+#This file is part of git-packaging.
+#
+#git-packaging is free software: you can redistribute it and/or modify
+#it under the terms of the GNU General Public License as published by
+#the Free Software Foundation, either version 3 of the License, or
+#(at your option) any later version.
+#
+#git-packaging is distributed in the hope that it will be useful,
+#but WITHOUT ANY WARRANTY; without even the implied warranty of
+#MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#GNU General Public License for more details.
+#
+#You should have received a copy of the GNU General Public License
+#along with git-packaging.  If not, see <http://www.gnu.org/licenses/>.
+
+libexecdir=$(git-packaging-find-lib)
+
+source "$libexecdir"/gp-cleanup
+source "$libexecdir"/gp-autoconf
+source "$libexecdir"/gp-git
+
+shopt -s dotglob
+
+function usage {
+	echo "Usage:" >&2
+	echo "  git import-release <source>" >&2
+	echo >&2
+	echo "source can be pre-extracted directory or tar/zip compressed archive" >&2
+}
+
+toprepodir=$(git rev-parse --show-toplevel)
+
+if [[ -d $1 ]]; then
+	sourcetype=dir
+elif [[ -f $1 ]]; then
+	sourcetype=archive
+else
+	echo "Invalid source path $1" >&2
+	exit 254
+fi
+
+sourcedir=
+if [[ $sourcetype == "archive" ]]; then
+	# unpack archive
+	tmpdir=$(mktemp -d)
+	function remove_tmpdir {
+		rm -rf "$tmpdir"
+	}
+	cleanup_func_add remove_tmpdir
+	case "$1" in
+	*.zip)
+		unzip "$1" -d "$tmpdir"
+		;;
+	*)
+		# assume all others to be tars
+		tar -xf "$1" -C "$tmpdir"
+		;;
+	esac
+
+	sourcedir=$tmpdir
+	unpackfiles=( "$tmpdir"/* )
+	if (( ${#unpackfiles[@]} == 1 )) && [[ -d ${unpackfiles[0]} ]]; then
+		sourcedir=${unpackfiles[0]}
+	fi
+else
+	# dealing with a pre-extracted directory
+	sourcedir=$1
+fi
+
+# Get version
+configure=$(autoconf_find_configure "$sourcedir")
+autoconf_ac_init "$configure"
+
+# Commit changes
+git_create_tmp_tree packaging/master
+git_set_work_tree "$sourcedir"
+cleanup_func_add git_clean_tmp_tree
+
+git add "$GIT_WORK_TREE"
+msgs=( "Imported release $autoconf_version" )
+git_commit_to packaging/master msgs

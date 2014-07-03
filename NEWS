@@ -1,0 +1,8 @@
+initial release 0.1
+-------------------
+
+ * autoconf release mechanism (git-release)
+ * importing autoconf packages (git-import-release)
+ * managing Debian package structures (git-package-debian)
+ * creating .changes files for Debian packaging (git-package-debian-create)
+

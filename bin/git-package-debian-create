@@ -1,0 +1,48 @@
+#!/bin/bash
+
+#Copyright (C) 2014 Robin McCorkell <rmccorkell@karoshi.org.uk>
+
+#This file is part of git-packaging.
+#
+#git-packaging is free software: you can redistribute it and/or modify
+#it under the terms of the GNU General Public License as published by
+#the Free Software Foundation, either version 3 of the License, or
+#(at your option) any later version.
+#
+#git-packaging is distributed in the hope that it will be useful,
+#but WITHOUT ANY WARRANTY; without even the implied warranty of
+#MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#GNU General Public License for more details.
+#
+#You should have received a copy of the GNU General Public License
+#along with git-packaging.  If not, see <http://www.gnu.org/licenses/>.
+
+libexecdir=$(git-packaging-find-lib)
+
+source "$libexecdir"/gp-cleanup
+source "$libexecdir"/gp-git
+source "$libexecdir"/gp-debian
+
+function usage {
+	echo "Usage:" >&2
+	echo "  git package-debian-create <distribution>" >&2
+}
+
+if [[ -z $1 ]]; then
+	exit 254
+fi
+
+repodir=$(git rev-parse --show-toplevel)
+
+git rev-parse --verify refs/heads/packaging/debian/"$1"
+
+git_create_tmp_tree packaging/debian/"$1"
+cleanup_func_add git_clean_tmp_tree
+git checkout-index -a
+
+cd "$GIT_WORK_TREE"
+debuild -S -k675FFC28
+
+echo
+abspath=$(readlink -f "$GIT_WORK_TREE"/..)
+echo "files can be found in $abspath"

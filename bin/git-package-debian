@@ -1,0 +1,215 @@
+#!/bin/bash
+
+#Copyright (C) 2014 Robin McCorkell <rmccorkell@karoshi.org.uk>
+
+#This file is part of git-packaging.
+#
+#git-packaging is free software: you can redistribute it and/or modify
+#it under the terms of the GNU General Public License as published by
+#the Free Software Foundation, either version 3 of the License, or
+#(at your option) any later version.
+#
+#git-packaging is distributed in the hope that it will be useful,
+#but WITHOUT ANY WARRANTY; without even the implied warranty of
+#MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#GNU General Public License for more details.
+#
+#You should have received a copy of the GNU General Public License
+#along with git-packaging.  If not, see <http://www.gnu.org/licenses/>.
+
+libexecdir=$(git-packaging-find-lib)
+
+source "$libexecdir"/gp-cleanup
+source "$libexecdir"/gp-git
+source "$libexecdir"/gp-autoconf
+source "$libexecdir"/gp-debian
+
+function usage {
+	echo "Usage:" >&2
+	echo "  git package-debian [extra-distributions]" >&2
+}
+
+function user_shell {
+	(
+		cd "$GIT_WORK_TREE"
+		SHELL=${SHELL:-sh}
+		$SHELL >&2 || true
+	)
+}
+
+gitdir=$(git rev-parse --git-dir)
+
+master_sha=$(git rev-parse refs/heads/packaging/master)
+
+if old_sha=$(git rev-parse --verify --quiet refs/heads/packaging/debian/master); then
+	contains=$(git branch --contains=$master_sha packaging/debian/master)
+	if [[ $contains ]]; then
+		echo "packaging/master is already fully merged into packaging/debian/master" >&2
+		exit 0
+	fi
+fi
+
+msgs=(  )
+parents=( "$master_sha" )
+
+git_create_tmp_tree --empty
+cleanup_func_add git_clean_tmp_tree
+if [[ $old_sha ]]; then
+	git_merge_tree "$master_sha" "$old_sha"
+	parents+=( "$old_sha" )
+	msgs+=( "Merge from packaging/master" )
+else
+	git read-tree "$master_sha"
+	msgs+=( "Import from packaging/master" )
+fi
+git checkout-index -a
+
+# generate debian/changelog
+changelog=$GIT_WORK_TREE/debian/changelog
+if [[ -f $changelog ]]; then
+	debian_parse_changelog "$changelog"
+else
+	mkdir -p "$GIT_WORK_TREE"/debian
+	touch "$changelog"
+fi
+
+configure=$(autoconf_find_configure "$GIT_WORK_TREE")
+autoconf_ac_init "$configure"
+
+if [[ $debian_pkgversion == $autoconf_version ]]; then
+	echo "error: debian package version matches upstream package version" >&2
+	exit 1
+fi
+debian_package=${debian_package:-$autoconf_tarname}
+debian_pkgversion=$autoconf_version
+debian_debversion=1
+debian_distribution=${debian_distribution:-unstable}
+debian_maintainer=$(git_author)
+debian_urgency=${debian_urgency:-low}
+
+debian_configure_versionsuffix
+
+msgs+=( "Upstream release $autoconf_version" )
+
+# begin generation
+changelogfragment=$(mktemp)
+cleanup_file_add "$changelogfragment"
+
+changes=( "Upstream release $autoconf_version" )
+debian_generate_changelog changes > "$changelogfragment"
+cat "$changelog" >> "$changelogfragment"
+mv -f "$changelogfragment" "$changelog"
+cleanup_file_remove "$changelogfragment"
+git add debian/changelog
+
+# finish up
+if ! git merge-index -o git-packaging-merge-helper -a; then
+	echo "Unresolved merge conflicts" >&2
+fi
+echo "Resolve any merge conflicts or make changes, then use git add to" >&2
+echo "stage files. When finished run 'exit' to continue" >&2
+echo >&2
+echo "Remember you need various debian/* files!" >&2
+echo >&2
+user_shell
+
+while ! git merge-index -o git-packaging-merge-helper -a; do
+	echo "Unresolved merge conflicts" >&2
+	echo "Fix merge conflicts then type 'exit' to continue" >&2
+	echo >&2
+	user_shell
+done
+
+git_commit_to packaging/debian/master msgs parents
+
+git_clean_tmp_tree
+
+# merge into other packaging/debian/* branches
+branches=( )
+while read -r branch; do
+	branch=${branch#\* }
+	if [[ $branch != "packaging/debian/master" ]]; then
+		branches+=( "$branch" )
+	fi
+done < <(git branch --list 'packaging/debian/*')
+
+while (( $# > 0 )); do
+	if [[ $1 == packaging/debian/* ]]; then
+		newbranch=$1
+	else
+		newbranch=packaging/debian/$1
+	fi
+	for branch in "${branches[@]}"; do
+		if [[ $branch == $newbranch ]]; then
+			unset newbranch
+			break
+		fi
+	done
+	if [[ $newbranch ]]; then
+		branches+=( "$newbranch" )
+	fi
+	shift
+done
+
+master_sha=$(git rev-parse refs/heads/packaging/debian/master)
+
+for branch in "${branches[@]}"; do
+	msgs=(  )
+	parents=( "$master_sha" )
+
+	git_create_tmp_tree --empty
+	unset changelogblob
+	if old_sha=$(git rev-parse --verify --quiet "refs/heads/$branch"); then
+		git_merge_tree "$master_sha" "$old_sha"
+		parents+=( "$old_sha" )
+		msgs+=( "Merge from packaging/debian/master" )
+		read -r _mode _type changelogblob _filename < <(git ls-tree "$branch" debian/changelog)
+	else
+		git read-tree "$master_sha"
+		msgs+=( "Import from packaging/debian/master" )
+	fi
+	git checkout-index -a
+
+	changelog=$GIT_WORK_TREE/debian/changelog
+	if [[ $changelogblob ]]; then
+		git cat-file blob "$changelogblob" > "$changelog"
+		debian_parse_changelog "$changelog"
+	else
+		> "$changelog"
+		debian_unset_variables debian_package debian_pkgversion
+	fi
+	debian_package=${debian_package:-$autoconf_tarname}
+	debian_pkgversion=$autoconf_version
+	debian_debversion=1
+	debian_distribution=${debian_distribution:-${branch##*/}}
+	debian_maintainer=$(git_author)
+	debian_urgency=${debian_urgency:-low}
+
+	debian_configure_versionsuffix
+
+	msgs+=( "Upstream release $autoconf_version" )
+
+	# begin generation
+	changelogfragment=$(mktemp)
+	cleanup_file_add "$changelogfragment"
+
+	changes=( "Upstream release $autoconf_version" )
+	debian_generate_changelog changes > "$changelogfragment"
+	cat "$changelog" >> "$changelogfragment"
+	mv -f "$changelogfragment" "$changelog"
+	cleanup_file_remove "$changelogfragment"
+	git add debian/changelog
+
+	while ! git merge-index -o git-packaging-merge-helper -a; do
+		echo "Unresolved merge conflicts" >&2
+		echo "Fix merge conflicts then type 'exit' to continue" >&2
+		echo >&2
+		user_shell
+	done
+
+	git_commit_to "$branch" msgs parents
+
+	git_clean_tmp_tree
+done
+
+cleanup_func_remove git_clean_tmp_tree

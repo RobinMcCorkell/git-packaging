@@ -1,0 +1,132 @@
+#!/bin/bash
+
+#Copyright (C) 2014 Robin McCorkell <rmccorkell@karoshi.org.uk>
+
+#This file is part of git-packaging.
+#
+#git-packaging is free software: you can redistribute it and/or modify
+#it under the terms of the GNU General Public License as published by
+#the Free Software Foundation, either version 3 of the License, or
+#(at your option) any later version.
+#
+#git-packaging is distributed in the hope that it will be useful,
+#but WITHOUT ANY WARRANTY; without even the implied warranty of
+#MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#GNU General Public License for more details.
+#
+#You should have received a copy of the GNU General Public License
+#along with git-packaging.  If not, see <http://www.gnu.org/licenses/>.
+
+# debian_unset_variables [exclude...]
+function debian_unset_variables {
+	local variables=( debian_package debian_pkgversion debian_debversion \
+	                  debian_versionsuffix debian_distribution \
+	                  debian_urgency )
+	local variable arg
+	for variable in "${variables[@]}"; do
+		for arg in "$@"; do
+			if [[ $arg == $variable ]]; then
+				unset variable
+				break
+			fi
+		done
+		if [[ $variable ]]; then
+			unset $variable
+		fi
+	done
+}
+
+# debian_parse_changelog <debian/changelog>
+# sets:
+#  debian_package: package name
+#  debian_pkgversion: package version
+#  debian_debversion: debian version
+#  debian_versionsuffix: array of version suffixes
+#  debian_distribution: debian distribution
+#  debian_maintainer: package maintainer
+#  debian_urgency: package urgency
+function debian_parse_changelog {
+	if [[ -z $1 ]]; then return 1; fi
+	debian_unset_variables
+	while read -r tag data; do
+		case "$tag" in
+		Source:)
+			debian_package=$data
+			;;
+		Version:)
+			local _version=${data%%~*}
+			local _suffix=${data#*~}
+			debian_pkgversion=${_version%%-*}
+			debian_debversion=${_version#*-}
+			debian_versionsuffix=( )
+			if [[ $_version != $data ]]; then
+				while [[ $_suffix ]]; do
+					debian_versionsuffix+=( "${_suffix%%~*}" )
+					_suffix=${_suffix#*~}
+				done
+			fi
+			;;
+		Distribution:)
+			debian_distribution=$data
+			;;
+		Maintainer:)
+			debian_maintainer=$data
+			;;
+		Urgency:)
+			debian_urgency=$data
+			;;
+		Changes:)
+			# end of useful data
+			break
+			;;
+		esac
+	done < <(dpkg-parsechangelog -l"$1")
+}
+
+# debian_find_changelog [dir]
+#  -> path-to-changelog
+function debian_find_changelog {
+	local dir=${1:-.}
+	if [[ -f $dir/debian/changelog ]]; then
+		echo "$dir/debian/changelog"
+		return
+	fi
+	return 1
+}
+
+# debian_generate_changelog <changes-array>
+#  -> changelog fragment
+#  changes-array is the name of a variable containing an array of changes
+function debian_generate_changelog {
+	if (( $# < 1 )); then return 1; fi
+	local _version_string=${debian_pkgversion}-${debian_debversion}
+	local _arg
+	if (( ${#debian_versionsuffix[@]} > 0 )); then
+		for _arg in "${debian_versionsuffix[@]}"; do
+			_version_string+="~${_arg}"
+		done
+	fi
+	echo "${debian_package} (${_version_string}) ${debian_distribution}; urgency=${debian_urgency}"
+	echo
+	local _ref_changes="${1}[@]"
+	for _arg in "${!_ref_changes}"; do
+		echo "  * ${_arg}"
+	done
+	echo
+	echo " -- ${debian_maintainer} $(date -R)"
+	echo
+}
+
+# debian_configure_versionsuffix
+# sets:
+#  debian_versionsuffix
+function debian_configure_versionsuffix {
+	if (( ${#debian_versionsuffix} == 0 )); then
+		if ! [[ $GIT_PACKAGING_DEBIAN_NO_DIST_SUFFIX ]]; then
+			debian_versionsuffix=( "$debian_distribution" )
+		fi
+		if [[ $GIT_PACKAGING_DEBIAN_VERSION_SUFFIX ]]; then
+			debian_versionsuffix+=( "$GIT_PACKAGING_DEBIAN_VERSION_SUFFIX" )
+		fi
+	fi
+}

@@ -1,0 +1,144 @@
+#!/bin/bash
+
+#Copyright (C) 2014 Robin McCorkell <rmccorkell@karoshi.org.uk>
+
+#This file is part of git-packaging.
+#
+#git-packaging is free software: you can redistribute it and/or modify
+#it under the terms of the GNU General Public License as published by
+#the Free Software Foundation, either version 3 of the License, or
+#(at your option) any later version.
+#
+#git-packaging is distributed in the hope that it will be useful,
+#but WITHOUT ANY WARRANTY; without even the implied warranty of
+#MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#GNU General Public License for more details.
+#
+#You should have received a copy of the GNU General Public License
+#along with git-packaging.  If not, see <http://www.gnu.org/licenses/>.
+
+# git_set_work_tree [work-tree]
+function git_set_work_tree {
+	if [[ $GIT_WORK_TREE ]]; then
+		rm -rf "$GIT_WORK_TREE"
+		unset GIT_WORK_TREE
+	fi
+	if [[ $1 ]]; then
+		export GIT_WORK_TREE=$1
+	fi
+}
+
+# git_set_index_file [index-file]
+function git_set_index_file {
+	if [[ $GIT_INDEX_FILE ]]; then
+		rm -f "$GIT_INDEX_FILE"
+		unset GIT_INDEX_FILE
+	fi
+	if [[ $1 ]]; then
+		export GIT_INDEX_FILE=$1
+	fi
+}
+
+# git_set_git_dir [dir]
+function git_set_git_dir {
+	if [[ $GIT_DIR ]]; then
+		unset GIT_DIR
+	fi
+	if [[ $1 ]]; then
+		export GIT_DIR=$1
+	fi
+}
+
+# git_create_tmp_tree [ref]
+# sets:
+#  GIT_WORK_TREE: temporary git work tree
+#  GIT_INDEX_FILE: temporary git index file
+#  GIT_DIR: absolute path to .git directory
+function git_create_tmp_tree {
+	local _ref=${1:-HEAD}
+	if ! git rev-parse --verify --quiet "$_ref"; then
+		_ref="--empty"
+	fi
+	git_set_work_tree "$(mktemp -d)"
+	git_set_index_file "$(mktemp)"
+
+	local relative=$(git rev-parse --git-dir)
+	local gitdir=$(readlink -f "$relative")
+	git_set_git_dir "$gitdir"
+
+	git read-tree "$_ref"
+}
+
+# git_update_ref <ref> <new> [old]
+function git_update_ref {
+	if [[ -z $1 ]] || [[ -z $2 ]]; then return 1; fi
+	local _args=( "$1" "$2" )
+	if [[ $3 ]] && git rev-parse --verify --quiet "$1" > /dev/null; then
+		_args+=( "$3" )
+	fi
+	git update-ref "${_args[@]}"
+}
+
+# git_commit_tree <tree> <msg-array> [parents-array]
+#  msg-array is the name of a variable containing an array of messages
+#  parents-array is the name of a variable containing an array of parent commit(s)
+function git_commit_tree {
+	if [[ -z $1 ]] || [[ -z $2 ]]; then return 1; fi
+	local _ref_msgs="${2}[@]" _ref_parents="${3}[@]"
+	local _args=( ) _arg
+	for _arg in "${!_ref_msgs}"; do
+		_args+=( -m "$_arg" )
+	done
+	for _arg in "${!_ref_parents}"; do
+		_args+=( -p "$_arg" )
+	done
+	git commit-tree "$1" "${_args[@]}"
+}
+
+# git_commit_to <ref> <msg-array> [parents-array]
+#  msg-array is the name of a variable containing an array of messages
+#  parents-array is the name of a variable containing an array of commit parents
+function git_commit_to {
+	if [[ -z $1 ]] || [[ -z $2 ]]; then return 1; fi
+	local _tree=$(git write-tree)
+
+	local _parents=( )
+	if [[ $3 ]]; then
+		local _ref_parents="${3}[@]" _arg
+		for _arg in "${!_ref_parents}"; do
+			if _arg=$(git rev-parse --verify --quiet "$_arg"); then
+				_parents+=( "$_arg" )
+			fi
+		done
+	else
+		if git rev-parse --verify --quiet "$1"; then
+			_parents+=( $(git rev-parse "$1") )
+		fi
+	fi
+
+	local _commit=$(git_commit_tree "$_tree" "$2" _parents)
+	git_update_ref refs/heads/"$1" "$_commit" "${_parents[0]}"
+}
+
+# git_merge_tree <ref1> <ref2>
+function git_merge_tree {
+	if [[ -z $1 ]] || [[ -z $2 ]]; then return 1; fi
+	local _parents=( "$1" "$2" )
+	local _merge_base=$(git merge-base "${_parents[@]}")
+	git read-tree -i -m "$_merge_base" "${_parents[@]}"
+}
+
+# git_clean_tmp_tree
+function git_clean_tmp_tree {
+	git_set_work_tree
+	git_set_index_file
+	git_set_git_dir
+}
+
+# git_author
+#  -> git commit author (according to git config)
+function git_author {
+	local username=$(git config --get user.name)
+	local email=$(git config --get user.email)
+	echo "$username <$email>"
+}

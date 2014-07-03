@@ -1,0 +1,111 @@
+#!/bin/bash
+
+#Copyright (C) 2014 Robin McCorkell <rmccorkell@karoshi.org.uk>
+
+#This file is part of git-packaging.
+#
+#git-packaging is free software: you can redistribute it and/or modify
+#it under the terms of the GNU General Public License as published by
+#the Free Software Foundation, either version 3 of the License, or
+#(at your option) any later version.
+#
+#git-packaging is distributed in the hope that it will be useful,
+#but WITHOUT ANY WARRANTY; without even the implied warranty of
+#MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#GNU General Public License for more details.
+#
+#You should have received a copy of the GNU General Public License
+#along with git-packaging.  If not, see <http://www.gnu.org/licenses/>.
+
+set -e
+
+cleanup_funcs=( )
+cleanup_files=( )
+
+# functions to be run on cleanup
+function cleanup_func_add {
+	if [[ -z "$1" ]]; then return 1; fi
+	cleanup_funcs=( "$1" "${cleanup_funcs[@]}" )
+}
+function cleanup_func_remove {
+	if [[ -z "$1" ]]; then return 1; fi
+	local new_funcs=( ) func
+	for func in "${cleanup_funcs[@]}"; do
+		if [[ $func != $1 ]]; then
+			new_funcs+=( "$func" )
+		fi
+	done
+	cleanup_funcs=( "${new_funcs[@]}" )
+}
+
+# files and directories to be removed on cleanup
+function cleanup_file_add {
+	if [[ -z $1 ]]; then return 1; fi
+	local file=$(readlink -f "$1")
+	cleanup_files=( "$file" "${cleanup_files[@]}" )
+}
+function cleanup_file_remove {
+	if [[ -z $1 ]]; then return 1; fi
+	local arg=$(readlink -f "$1")
+	local new_files=( ) file
+	for file in "${cleanup_files[@]}"; do
+		if [[ $file != $arg ]]; then
+			new_files+=( "$file" )
+		fi
+	done
+	cleanup_files=( "${new_files[@]}" )
+}
+
+# cleanup
+function cleanup {
+	for func in "${cleanup_funcs[@]}"; do
+		$func
+	done
+	for file in "${cleanup_files[@]}"; do
+		if [[ -e $file ]]; then
+			rm -rf "$file"
+		fi
+	done
+}
+
+################
+# Error handling
+################
+
+# default usage
+function usage {
+	echo "Usage:" >&2
+	echo "  $0 [options]" >&2
+}
+
+function error_handler {
+	set +e
+	cleanup
+
+	case $1 in
+	0)
+		return
+		;;
+	254)
+		usage
+		exit 1
+		;;
+	*)
+		echo >&2
+		echo "An error has occurred!" >&2
+		read -r lineno func file < <(caller 0)
+		echo "$file:$func:$lineno: exit status $1" >&2
+		echo >&2
+		echo "Backtrace:" >&2
+		(( i = 0 ))
+		while caller $i; do
+			(( ++i ))
+		done
+
+		exit "$1"
+		;;
+	esac
+}
+
+trap 'error_handler $?' EXIT
+trap exit ERR
