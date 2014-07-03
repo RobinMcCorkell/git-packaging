@@ -41,7 +41,7 @@ cleanup_func_add git_clean_tmp_tree
 git checkout-index -a
 
 cd "$GIT_WORK_TREE"
-debuild -S -k675FFC28
+debuild -S
 
 echo
 abspath=$(readlink -f "$GIT_WORK_TREE"/..)
