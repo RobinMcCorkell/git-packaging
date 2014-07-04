@@ -113,7 +113,7 @@ function debian_generate_changelog {
 		echo "  * ${_arg}"
 	done
 	echo
-	echo " -- ${debian_maintainer} $(date -R)"
+	echo " -- ${debian_maintainer}  $(date -R)"
 	echo
 }
 
